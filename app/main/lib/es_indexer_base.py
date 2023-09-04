@@ -1,10 +1,11 @@
 import json
 from abc import ABC, abstractmethod
-from elasticsearch.helpers import bulk
+
 from app.main import app, es, rq
 from app.main.enum.field_type_enum import FieldTypeEnum
-from app.main.enum.es_operation_enum import ESOperationEnum
-from app.main.util.return_value import return_value_201, return_value_400
+from app.main.enum.filter_type_enum import FilterTypeEnum
+from app.main.util.return_value import return_value_201
+
 
 class ESIndexerBase(ABC):
     def __init__(self, index_name):
@@ -29,9 +30,9 @@ class ESIndexerBase(ABC):
     def get_es_mapping_fields(self):
         return []
 
-    def es_index(self, data: json, refresh=False) -> None:
+    def es_index(self, data: json, refresh=False):
         doc_id = data.get('id')
-        es.index(index=self.index_name, id=doc_id, refresh=refresh)
+        es.index(index=self.index_name, document=data, id=doc_id, refresh=refresh)
         return return_value_201("index success")
 
     def es_search(self, current_page, each_page, sort_by, sort_direction, filters, query_setting):
@@ -57,28 +58,52 @@ class ESIndexerBase(ABC):
         return results['hits']['total']['value'], results['hits']['hits']
 
     def make_bool_filter(self, filters, query_setting):
-        _filter = list()
+        filter_body = {"bool": {
+            "must": [],
+            "should": []
+        }}
         for k, v in filters.items():
-            match query_setting.get(k):
+            field_setting = query_setting.get(k)
+            query_condition = {"term": {k: v}}
+            match field_setting.get("field_type"):
                 case FieldTypeEnum.LIST.name:
-                    _filter.append({"terms": {k: v}})
+                    query_condition = {"terms": {k: json.loads(v)}}
                 case FieldTypeEnum.RANGE.name:
                     left, right = json.loads(v)
                     if (left and left != '') or (right and right != ''):
                         if left and not right:
-                            _filter.append({"gte": left, "time_zone": "Asia/Shanghai"})
+                            query_condition = {"gte": left}
                         elif right and right != '':
-                            _filter.append({"lte": right, "time_zone": "Asia/Shanghai"})
+                            query_condition = {"lte": right}
                         else:
-                            _filter.append({"gte": left, "lte": right, "time_zone": "Asia/Shanghai"})
+                            query_condition = {"gte": left, "lte": right}
+                case FieldTypeEnum.DATETIME_RANGE.name:
+                    left, right = json.loads(v)
+                    if (left and left != '') or (right and right != ''):
+                        if left and not right:
+                            # cond = {"gte": left, "time_zone": "Asia/Shanghai"}
+                            cond = {"gte": left}
+                        elif right and not left:
+                            # cond = {"lte": right, "time_zone": "Asia/Shanghai"}
+                            cond = {"lte": right}
+                        else:
+                            # cond = {"gte": left, "lte": right, "time_zone": "Asia/Shanghai"}
+                            cond = {"gte": left, "lte": right}
+                        query_condition = {"range": {k: cond}}
                 case FieldTypeEnum.CONTAIN.name:
-                    _filter.append({"match": {k: v}})
+                    query_condition = {"match_phrase": {k: v}}
+            match field_setting.get('filter_type'):
+                case FilterTypeEnum.MUST.name:
+                    filter_body['bool']['must'].append(query_condition)
                 case _:
-                    _filter.append({"term": {k: v}})
-        return _filter
+                    filter_body['bool']['should'].append(query_condition)
 
-    def es_delete(self, data: json):
-        doc_id = data.get('id')
+        if len(filter_body['bool']['should']) > 0:
+            # 最少匹配一个条件
+            filter_body['bool']['minimum_should_match'] = 1
+        return filter_body
+
+    def es_delete(self, doc_id: str):
         es.delete(index=self.index_name, id=doc_id)
         return return_value_201("delete success")
 
@@ -86,26 +111,6 @@ class ESIndexerBase(ABC):
         doc_id = data.get('id')
         es.update(index=self.index_name, id=doc_id, body={"doc": data, "doc_as_upsert": True}, refresh=refresh)
         return return_value_201("update success")
-
-    rq.job(ttl=5)
-    def es_op_bulk(self, op: str, items, refresh=False):
-        data = list()
-        match op.upper:
-            case ESOperationEnum.INDEX.name:
-                op = ESOperationEnum.INDEX.value
-            case ESOperationEnum.UPDATE.name:
-                op = ESOperationEnum.UPDATE.value
-            case ESOperationEnum.DELETE.name:
-                op = ESOperationEnum.DELETE.value
-            case _:
-                app.logger.error('es bulk operation is not valid. check your bulk op value')
-                return return_value_400("")
-        for item in items:
-            action = {"_op_type": op, "_index": self.index_name, "_source": item, "_id": item.get('id')}
-            data.append(action)
-        # TODO check resp
-        resp = bulk(es, data, index=self.index_name, refresh=refresh)
-        return return_value_201("")
 
     # def es_update_bulk(self, items, refresh=False):
     #     data = list()

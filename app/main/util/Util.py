@@ -32,6 +32,15 @@ def get_utc_8_timestamp(obj):
     return obj.replace(tzinfo=tz_utc_8).timestamp()
 
 
+def transfer_datetime(date_string: str):
+    try:
+        _datetime_obj = datetime.strptime(date_string, "%Y-%m-%d %H:%M:%S")
+    except:
+        _date_obj=date_string.split()[0] + ' 00:00:00'
+        _datetime_obj = datetime.strptime(_date_obj, "%Y-%m-%d %H:%M:%S")
+    return str(_datetime_obj)
+
+
 def get_timestamp(time):
     time_array = time.strptime(time, "%Y-%m-%d %H:%M:%S")
     time_ = int(time.mktime(time_array))
@@ -136,10 +145,10 @@ class AlchemyEncoder(json.JSONEncoder):
 def redis_balance(balance_key: str) -> str:
     balance = redis_store.lpop(balance_key)
     if balance:
-        return app.config.get('REDIS_PREFIX') + balance % len(app.config.get('REDIS_QUEUE'))
+        return app.config.get('REDIS_PREFIX') + str(int(balance) % len(app.config.get('REDIS_QUEUE')))
     else:
-        redis_store.lpush(balance_key, [i for i in range(pow(2, 27))])
-
+        redis_store.lpush(balance_key, *[i for i in range(pow(2, 12))])
+        app.logger.info('🟢 insert redis balance value')
         return redis_balance(balance_key)
 
 

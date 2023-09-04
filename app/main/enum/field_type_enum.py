@@ -11,5 +11,6 @@ class FieldTypeEnum(Enum):
 
     LIST = "列表"
     RANGE = "范围"
+    DATETIME_RANGE = "时间范围"
     CONTAIN = "包含"
 

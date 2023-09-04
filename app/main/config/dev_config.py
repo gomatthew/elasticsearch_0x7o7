@@ -15,7 +15,7 @@ class DevelopmentConfig(Config):
     RQ_REDIS_URL = REDIS_URL
     BALANCE_KEY = '0x7o7ES'
     REDIS_PREFIX = 'dev:queue_'
-    REDIS_QUEUE = [REDIS_PREFIX + str(i) for i in range(10)]
+    REDIS_QUEUE = ['dev:queue_' + str(i) for i in range(3)]
     # MISSION Settings
     PROCESS_WORKERS = 6
     TASKS = 5000  # 该配置乘2000 即为数据量
@@ -28,9 +28,9 @@ class DevelopmentConfig(Config):
 
     # Elastic Search
     ELASTICSEARCH_HOST = ['http://127.0.0.1:19200']
-    # ELASTICSEARCH_HTTP_AUTH = 'elastic','7t2h4BdVZboWbc7wDnQl'
+    ELASTICSEARCH_HTTP_AUTH = 'elastic', '7t2h4BdVZboWbc7wDnQl'
     # elasticsearch-password 7t2h4BdVZboWbc7wDnQl
     ES_INDEX_PREFIX = 'dev_'
-    ES_INDEX_SHARDS = 3
+    ES_INDEX_SHARDS = 1
     ES_INDEX_REPLICAS = 1
     # sqlacodegen --outfile=models2.py mysql+pymysql://root:makemoney@127.0.0.1:3306/temp_duyun

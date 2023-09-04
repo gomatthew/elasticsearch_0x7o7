@@ -5,7 +5,7 @@ import json
 import pandas as pd
 from datetime import datetime
 from app.main import app, db, rq
-from app.main.service.es_service import set_data_bulk
+from app.main.service.es_service import index_data
 from app.main.util.Util import http_post_request, camel_to_snake, AlchemyEncoder, DateEncoder
 from app.main.model.tag_dict_model import TagDict
 from app.main.util.dummy_data import gen_person

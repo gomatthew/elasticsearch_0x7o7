@@ -39,7 +39,7 @@ manager.add_command("db", MigrateCommand)
 
 @manager.command
 def run_worker(queue_name):
-    if queue_name not in app.config['QUEUES']:
+    if queue_name not in app.config['REDIS_QUEUE']:
         app.logger.error("queue not valid {}".format(queue_name))
         # return
 

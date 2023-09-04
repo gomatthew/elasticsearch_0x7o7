@@ -54,18 +54,22 @@
    
    windows `$ redis-server.exe redis.conf`   
    
-2. 环境变量设置:
+3. 环境变量设置:
    
    `$ export RUNTIME_ENV=unittest`
 
-2. 启动服务:
+4. 启动服务:
 
    `$ python manage.py run`
 
-3. 开始测试:
+5. 开始测试:
 
     `$ make tests`
-4. 查看结果:
+6. 查看结果:
    
     开始单元测试并检测 数据构建es功能，es数据增删改查当完成单元测试后检测是否有结果为 F并查看报错信息。当全部通过后会显示整体覆盖率，应尽可能根据
     实际业务情况构建测试数据提升覆盖率。
+7. 更改es密码:
+    docker exec -it es-test bash
+    bin/elasticsearch-setup_password interactive 7t2h4BdVZboWbc7wDnQl
+8. 

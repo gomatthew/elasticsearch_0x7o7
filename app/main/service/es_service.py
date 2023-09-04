@@ -1,11 +1,13 @@
-import random
+import json
+import pandas as pd
 from traceback import format_exc
-from app.main import rq, app
+from app.main import rq, app, es
 from app.main.lib.es_indexer_factory import ESIndexerFactory
-from app.main.util.return_value import return_value_200, return_value_400, return_value_500
+from app.main.util.return_value import return_value_200, return_value_201, return_value_400, return_value_500
 from app.main.enum.es_operation_enum import ESOperationEnum
-from app.main.lib.datetimeLib import dt
-from app.main.util.Util import redis_balance
+from app.main.util.Util import redis_balance, transfer_datetime, get_current_datetime
+from elasticsearch.helpers import bulk
+
 
 def index_data(data, index_name, operation='index', refresh=False):
     """
@@ -16,25 +18,33 @@ def index_data(data, index_name, operation='index', refresh=False):
         resp, status = validate_data(data)
         if status == 400:
             return resp, status
+        data = resp.get('data')
         if len(data) > 1:
             queue = redis_balance(app.config.get('BALANCE_KEY'))
-            app.logger.info(f'🟢 bulk {operation} {es_indexer.index_name} - {len(data)} items with queue:{queue}.')
-            es_indexer.es_op_bulk.queue(op=operation, items=data, refresh=refresh, queue=queue)
-            # app.logger.info(f'🟢 {operation} done with code:{status}, spending time:{dt.datetime - start_time} seconds.')
+            app.logger.info(f'🟢 bulk - {operation} - {es_indexer.index_name} - {len(data)} items with queue:{queue}.')
+            es_op_bulk.queue(index_name=es_indexer.index_name, op=operation, items=data, refresh=refresh, queue=queue)
             return return_value_200(message=f'{operation} accept')
+        else:
+            data = data[0]
         match operation.upper():
             case ESOperationEnum.INDEX.name:
-                start_time = dt.datetime
-                app.logger.info(f'🟢 {operation} {es_indexer.index_name} single data')
-                resp, status = es_indexer.es_index(data, refresh=refresh)
-                app.logger.info(f'🟢 {operation} done with code:{status},spending time:{dt.datetime - start_time} seconds.')
-                return resp, status
+                start_time = get_current_datetime()
+                queue = redis_balance(app.config.get('BALANCE_KEY'))
+                app.logger.info(f'🟢 {operation} {es_indexer.index_name} single data , queue:{queue}')
+                es_index.queue(item=data, index_name=index_name, refresh=refresh, queue=queue)
+                app.logger.info(
+                    f'🟢 {operation} done with code:{status},spending time:{get_current_datetime() - start_time} \
+                    seconds.')
+                return return_value_200("index accept")
             case ESOperationEnum.UPDATE.name:
-                start_time = dt.datetime
-                app.logger.info(f'🟢 {operation} {es_indexer.index_name} single data')
-                resp, status = es_indexer.es_update(data, refresh=refresh)
-                app.logger.info(f'🟢 {operation} done with code:{status},spending time:{dt.datetime - start_time} seconds.')
-                return resp, status
+                start_time = get_current_datetime()
+                queue = redis_balance(app.config.get('BALANCE_KEY'))
+                app.logger.info(f'🟢 {operation} {es_indexer.index_name} single data , queue:{queue}')
+                es_update.queue(data, index_name, refresh=refresh, queue=queue)
+                app.logger.info(
+                    f'🟢 {operation} done with code:{status},spending time:{get_current_datetime() - start_time} \
+                    seconds.')
+                return return_value_201("update accept")
     except BaseException as e:
         app.logger.error(format_exc())
         app.logger.error(e)
@@ -42,109 +52,34 @@ def index_data(data, index_name, operation='index', refresh=False):
 
 
 def delete_data(data, index_name, refresh=False):
+    start_time = get_current_datetime()
     es_indexer = ESIndexerFactory.create_indexer(index_name)
-    resp, status = validate_data(data)
-    if status == 400:
-        return resp, status
-    if len(data) > 1:
-        resp, status = index_data(data, index_name, 'delete', refresh)
-        return resp, status
-    resp, status = es_indexer.es_delete(data)
+    if isinstance(data, str):
+        data = json.loads(data)
+    _ids = data.get('ids')
+    delete_action = list()
+    if not _ids:
+        return return_value_400("id不能为空")
+    if len(_ids) > 1:
+        for _id in _ids:
+            action = {"_op_type": 'delete', "_index": es_indexer.index_name, "_id": _id}
+            # app.logger.info(item.get('id'))
+            delete_action.append(action)
+        resp = bulk(es, delete_action, index=es_indexer.index_name, refresh=refresh, raise_on_error=True)
+        if resp[0] == len(_ids):
+            app.logger.info(
+                f'🟢 Delete Success, data size : {len(data)} , spend time : {get_current_datetime() - start_time}')
+            return return_value_201("Delete Success")
+        else:
+            app.logger.error(f'🔴 Delete Failed, info:{resp}')
+            return return_value_500("delete not success")
+    resp, status = es_indexer.es_delete(_ids[0])
     return resp, status
-
-# def set_data(data, index_name, operation, is_update=False, refresh=False):
-#     """
-#     Create or update index data.
-#     """
-#     index_name = app.config.get('ES_INDEX_PREFIX') + index_name
-#     resp, status = validate_data(data)
-#     if status == 400:
-#         return resp, status
-#     # TODO do a batter balance
-#     queue_num = str(random.randint(0, 9))
-#     # queue_num = '0'
-#     items = data.get('data')
-#     if len(items) > 1:
-#         match is_update:
-#             case False:
-#                 # if is_update is False:
-#                 app.logger.info(f'bulk operation in queue:{queue_num}')
-#                 set_data_bulk.queue(items, index_name, workers=queue_num, operation=operation, refresh=refresh,
-#                                     queue=app.config.get("RQ_QUEUE_PREFIX") + queue_num)
-#                 return return_value_201("index success")
-#             case True:
-#                 # elif is_update is True:
-#                 app.logger.info(f'bulk operation in queue: update')
-#                 set_data_bulk.queue(items, index_name, workers=queue_num, operation='update', refresh=refresh,
-#                                     queue=app.config.get("RQ_QUEUE_PREFIX") + 'update')
-#                 return return_value_201("update success")
-#
-#     # 单笔数据update&index
-#     match is_update:
-#         # for unit test
-#         # es_update(items[0], index_name, refresh)
-#         case True:
-#             app.logger.info(f'single operation in queue:{queue_num}')
-#             # es_update.queue(items, index_name, refresh, queue=app.config.get("RQ_QUEUE_PREFIX") + queue_num)
-#             es_update(items, index_name, refresh)
-#             return return_value_200("index success")
-#         case False:
-#             # for unit test
-#             # es_index(items[0], index_name, refresh)
-#             app.logger.info(f'single operation in queue: update')
-#             es_index.queue(items, index_name, refresh, queue=app.config.get("RQ_QUEUE_PREFIX") + 'update')
-#             return return_value_201("update success")
-
-
-
-# def delete_data(data, index_name, refresh=False):
-#     resp, status = validate_data(data)
-#     if status == 400:
-#         return resp, status
-#     items = data.get('data')
-#     if len(items) > 1:
-#         set_data_bulk(items, index_name, operation='delete', refresh=refresh)
-#         return return_value_200("delete success")
-#     for item in items:
-#         queue_name = app.config.get("RQ_QUEUE_PREFIX") + str(items.index(item) % len(app.config.get("QUEUES")))
-#         # for unit test
-#         # es_delete(item, index_name, refresh)
-#         es_delete.queue(item, index_name, queue=queue_name)
-#
-#     return return_value_200("delete success")
-
-
-# @rq.job(result_ttl=5)
-# def set_data_bulk(items, index_name, workers, operation='index', refresh=False):
-#     start_time = datetime.now()
-#     batch = list()
-#     for item in items:
-#         action = {"_op_type": operation, "_index": index_name, "_source": item if operation != 'delete' else None,
-#                   "_id": item.get('id') if operation != 'delete' else item}
-#         batch.append(action)
-#     bulk_operation_resp = bulk(es, batch, index=index_name, refresh=refresh)
-#     end_time = datetime.now()
-#     spend_time = (end_time - start_time).total_seconds()
-#     success = 0
-#     if bulk_operation_resp[0] == len(items):
-#         app.logger.info(f'本次插入ES>{len(batch)}<笔数据,用时==>{spend_time}秒')
-#     else:
-#         app.logger.info(f'本次插入ES失败，ES反馈结果为:{bulk_operation_resp}')
-#         success = 1
-#     task_obj = TaskRecord()
-#     task_obj.start_time = start_time
-#     task_obj.spend_time = spend_time
-#     task_obj.finish_time = end_time
-#     task_obj.success = success
-#     task_obj.data_rows = len(items)
-#     task_obj.workers = workers
-#     db.session.add(task_obj)
-#     db.session.commit()
 
 
 def search_data(params, index_name, query_fields, query_setting):
     each_page = int(params.get('eachPage', 10))
-    current_page = int(params.get('currentPage', 1))
+    current_page = int(params.get('currentPage', 0))
     sort_by = params.get('sortBy', 'id')
     sort_direction = params.get('sortDirection', 'desc')
     filters = {}
@@ -175,23 +110,69 @@ def search_data(params, index_name, query_fields, query_setting):
 
     return page_data, 200
 
-#
-# @rq.job(result_ttl=5)
-# def es_index(item, index_name, refresh=False):
-#     es_indexer = ESIndexerFactory.create_indexer(index_name)
-#     es_indexer.es_index(item, refresh)
-#
-#
-# @rq.job(result_ttl=5)
-# def es_update(item, index_name, refresh=False):
-#     es_indexer = ESIndexerFactory.create_indexer(index_name)
-#     es_indexer.es_update(item, refresh)
-#
-#
-# @rq.job(result_ttl=5)
-# def es_delete(doc_id, index_name, refresh=False):
-#     es_indexer = ESIndexerFactory.create_indexer(index_name)
-#     es_indexer.es_delete(doc_id, refresh)
+
+@rq.job(ttl=5)
+def es_op_bulk(index_name: str, op: str, items, refresh=False):
+    try:
+        start_time = get_current_datetime()
+        data = list()
+        match op.upper():
+            case ESOperationEnum.INDEX.name:
+                op = ESOperationEnum.INDEX.value
+                for item in items:
+                    action = {"_op_type": op, "_index": index_name, "_id": item.get('id'), "_source": item}
+                    # app.logger.info(item.get('id'))
+                    data.append(action)
+            case ESOperationEnum.UPDATE.name:
+                op = ESOperationEnum.UPDATE.value
+                for item in items:
+                    action = {"_op_type": op, "_index": index_name, "_id": item.get('id'), "doc": item}
+                    # app.logger.info(item.get('id'))
+                    data.append(action)
+            case _:
+                app.logger.error('es bulk operation is not valid. check your bulk op value')
+                return return_value_400("")
+
+        resp = bulk(es, data, index=index_name, refresh=refresh, raise_on_error=True)
+        if resp[0] == len(data):
+            app.logger.info(
+                f'🟢 Insert Success, data size : {len(data)} , spend time : {get_current_datetime() - start_time}')
+            return return_value_201("")
+        else:
+            app.logger.error(f'🔴 Insert Failed, info:{resp}')
+            return return_value_500("data insert es not success")
+    except BaseException as e:
+        app.logger.error(f'🔴 Exception: {e}')
+
+
+@rq.job(result_ttl=5)
+def es_index(item, index_name, refresh=False):
+    try:
+        es_indexer = ESIndexerFactory.create_indexer(index_name)
+        es_indexer.es_index(item, refresh)
+        app.logger.info(f'🟢 Single Insert Success.')
+    except BaseException as e:
+        app.logger.error(f'🔴 Single Insert Error:{e}')
+
+
+@rq.job(result_ttl=5)
+def es_update(item, index_name, refresh=False):
+    try:
+        es_indexer = ESIndexerFactory.create_indexer(index_name)
+        es_indexer.es_update(item, refresh)
+        app.logger.info(f'🟢 Single Update Success.')
+    except BaseException as e:
+        app.logger.error(f'🔴 Single Update Error:{e}')
+
+
+@rq.job(result_ttl=5)
+def es_delete(doc_id, index_name, refresh=False):
+    try:
+        es_indexer = ESIndexerFactory.create_indexer(index_name)
+        es_indexer.es_delete(doc_id, refresh)
+        app.logger.info(f'🟢 Single Delete Success.')
+    except BaseException as e:
+        app.logger.error(f'🔴 Single Delete Error:{e}')
 
 
 def es_index_mapping(index_name):
@@ -227,7 +208,7 @@ def rebuild_es_mapping(index_name=None):
     if index_name:
         indexes = [index_name]
     else:
-        indexes = app.config.get('ES_INDEX')
+        indexes = app.config.get('ES_INDEX_PREFIX')
     for index in indexes:
         es_indexer = ESIndexerFactory.create_indexer(index_name=index)
         # es_indexer.create_es_index(number_of_shards=app.config.get('ES_DEFAULT_SHARDS'),number_of_replicas=app.config.get('ES_DEFAULT_REPLICAS'))
@@ -235,7 +216,16 @@ def rebuild_es_mapping(index_name=None):
 
 
 def validate_data(data):
+    if isinstance(data, str):
+        data = json.loads(data)
+    items: dict
     items = data.get('data')
     if not items:
         return return_value_400("索引数据不能为空")
-    return return_value_200("")
+    df = pd.DataFrame(items)
+    df['create_time'] = df.apply(lambda x: transfer_datetime(x.create_time), axis=1)
+    df['update_time'] = df.apply(lambda x: transfer_datetime(x.update_time), axis=1)
+    df['comment_time'] = df.apply(lambda x: transfer_datetime(x.comment_time), axis=1)
+    df['star'].fillna(0, inplace=True)
+    _data = df.to_dict(orient='records')
+    return return_value_200("check success", data=_data)
