@@ -1,6 +1,6 @@
 # SCM ES Service
 
-本服务负责提供所有 `SCM` 相关的Elastic Search搜索接口.
+本服务负责提供相关的Elastic Search 增删改查接口.
 
 ## 开始使用
 
